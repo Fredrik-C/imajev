@@ -19,6 +19,8 @@ services:
       - "${IMAJEV_PORT:-8765}:8765"
     environment:
       IMAJEV_API_KEY: "${IMAJEV_API_KEY:?Set IMAJEV_API_KEY in .env}"
+      # Avoid ROCr AsyncEventsLoop idle CPU spin; serving does not use HSA profiling tools.
+      HSA_TOOLS_DISABLE_REGISTER: "${HSA_TOOLS_DISABLE_REGISTER:-1}"
       IMAJEV_MODEL_REPO: "${IMAJEV_MODEL_REPO:-mohit67890/imajev-4b}"
       IMAJEV_MODEL_REVISION: "${IMAJEV_MODEL_REVISION:-c9e5f132465da85d31735ec502d5557982671a7d}"
       IMAJEV_BASE_REPO: "${IMAJEV_BASE_REPO:-Qwen/Qwen3.5-4B}"

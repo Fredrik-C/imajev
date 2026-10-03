@@ -115,6 +115,8 @@ You can point a client that supports a configurable Jev decisions URL at `http:/
 
 The Radeon 780M is an integrated GPU and uses system memory. On ROCm the server selects FP16 (AMD's documented validated type for Ryzen APUs); CUDA servers retain their bf16 path. 96 GB system RAM is ample for the model, but actual throughput depends on the iGPU memory bandwidth and the UMA allocation set by firmware. If GPU memory allocation fails or is unusually constrained, check BIOS/UEFI UMA frame-buffer settings and leave enough memory for Ubuntu and Docker.
 
+The Compose service sets `HSA_TOOLS_DISABLE_REGISTER=1` to prevent an idle CPU spin in ROCr's `AsyncEventsLoop` observed with this PyTorch/ROCm setup. Imajev serving does not use ROCm profiling tools. This disables HSA tool registration, so unset it (`HSA_TOOLS_DISABLE_REGISTER=0`) only when you need ROCprofiler/ROCTracer profiling. Apply the setting with `docker compose up -d`; no image rebuild is needed.
+
 The service defaults to one option-order pass (`IMAJEV_ROTATIONS=1`) to keep latency and memory use down. The public 4-rotation configuration uses `calibration-rot4.json`; to enable it, set both `IMAJEV_ROTATIONS=4` and `IMAJEV_CALIBRATION=calibration-rot4.json` in `.env`, then recreate the service with `docker compose up -d`. Calibration changes probabilities, not the selected answer. These H100 benchmark timings do not predict 780M performance.
 
 ## Useful commands
