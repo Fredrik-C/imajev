@@ -179,6 +179,9 @@ class TorchBackend:
         thought of at most max_tokens, and its decision is read again right after the thought (docs/think-if-unsure-plan.md)."""
         if thinking is not None and thinking.active and self.rotations != 1:
             raise PlaygroundError(422, "invalid_request", "thinking needs a server running --rotations 1")
+        if (self.fast and self.torch.version.hip is not None and not images and self.rotations == 1
+                and len(request.fields) > 1 and not (thinking is not None and thinking.active)):
+            return self._score_fast_text_batch(request)
         results, seconds, tokens, thoughts = [], 0.0, 0, []
         for field in request.fields:
             header, choices, texts = compile_question(field, request.state, getattr(self, "prompt_layout", "standard"))
@@ -213,6 +216,44 @@ class TorchBackend:
         usage = {"prefill_ms": 0.0, "questions_ms": round(seconds * 1000, 1), "input_tokens": tokens, "rotations": self.rotations}
         if thinking is not None and thinking.active:
             usage["thinking"] = {"mode": thinking.mode, "max_tokens": thinking.max_tokens, "thought": thoughts}
+        return results, usage
+
+    def _score_fast_text_batch(self, request):
+        """Batch text-only questions on ROCm to reuse model weights across up to four prompts per forward."""
+        prepared = []
+        for index, field in enumerate(request.fields):
+            header, choices, texts = compile_question(field, request.state, getattr(self, "prompt_layout", "standard"))
+            labels = self.engine.labels(len(choices), 0)
+            prompt = header + "\n".join(f"{label}: {text}" for label, text in zip(labels, texts))
+            rendered = self.engine.render(prompt, 0)
+            token_ids = self.engine.label_ids(rendered, labels)
+            prepared.append((index, choices, rendered, token_ids))
+
+        # Similar prompt lengths reduce left-padding work in each batch. Bound batch memory for
+        # requests containing expanded multi-label questions.
+        prepared.sort(key=lambda row: len(row[2]))
+        logits_by_index = [None] * len(prepared)
+        max_tokens = 0
+        started = perf_counter()
+        for start in range(0, len(prepared), 4):
+            chunk = prepared[start:start + 4]
+            examples = [(rendered, [], token_ids, index) for index, _, rendered, token_ids in chunk]
+            inputs, token_ids, _ = self.engine.collate(examples)
+            max_tokens = max(max_tokens, int(inputs["attention_mask"].sum(dim=1).max().item()))
+            with self.torch.inference_mode():
+                batch_logits = self.engine.candidate_logits_batch(inputs, token_ids)
+            for (index, _, _, _), row in zip(chunk, batch_logits):
+                logits_by_index[index] = [float(value) for value in row.detach().cpu().tolist()]
+
+        prepared_by_index = sorted(prepared, key=lambda row: row[0])
+        results = []
+        for index, field in enumerate(request.fields):
+            _, choices, _, token_ids = prepared_by_index[index]
+            results.append(result_from_logits(choices, logits_by_index[index], token_ids=token_ids))
+        elapsed = perf_counter() - started
+        usage = {"prefill_ms": 0.0, "questions_ms": round(elapsed * 1000, 1),
+                 "input_tokens": max_tokens, "rotations": self.rotations,
+                 "question_batch_size": min(4, len(prepared))}
         return results, usage
 
     def _think(self, images, prompt, choices, labels, thinking):
