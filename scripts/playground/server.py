@@ -148,13 +148,18 @@ class TorchBackend:
                 self.engine.model = PeftModel.from_pretrained(self.engine.model, str(adapter)).eval()
             self.engine.enable_readout(adapter, trainable=False, codes=readout_codes)
         self.graph_lengths = []
-        if self.fast and device == "cuda":
+        if self.fast and device == "cuda" and torch.version.hip is None:
             lengths = [n for n in (graph_lengths or GRAPH_LENGTHS) if n <= int(max_input_tokens)]
             try:
                 self.graph_lengths = self.engine.capture_graphs(lengths).lengths
             except Exception:  # the eager path computes the same function
                 log.exception("CUDA graph capture failed; serving the eager path")
                 self.engine.graphs = None
+        elif self.fast and device == "cuda" and torch.version.hip is not None:
+            # PyTorch exposes ROCm devices as "cuda", but graph warm-up/capture caused
+            # GPU hangs on the gfx1103 Radeon 780M. Keep the lower-risk fast preparation
+            # path (cached label tokenization and text-only tokenization) without capture.
+            log.info("fast path enabled; HIP graph capture disabled for stability")
         if self.engine.readout is None and readout_codes is not None:  # base model / legacy adapter: LM-head rows
             self.engine.codes = check_readout_codes(readout_codes)
         trained = self.engine.prompt_layout  # the adapter's recorded layout (standard when absent)
