@@ -123,6 +123,8 @@ The service defaults to one option-order pass (`IMAJEV_ROTATIONS=1`) to keep lat
 
 For lower PyTorch latency, set `IMAJEV_FAST=1` in `.env` and recreate the service. This enables cached label tokenization and a faster preparation path. On ROCm, multi-question text-only requests with one rotation are scored in batches of up to four, while image requests, reasoning, and multi-rotation requests stay sequential. NVIDIA CUDA also attempts graph capture at startup. ROCm skips graph capture because it caused GPU hangs on a Radeon 780M; all ROCm inference uses eager model forwards. Compare `total_ms` and answers on representative requests; set `IMAJEV_FAST=0` to return to the standard path.
 
+PyTorch reports its ROCm AOTriton attention kernels as experimental on this GPU. To benchmark them, set `TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL=1` in `.env` and recreate the service. Compare warm latency and answers against the default (`0`) on the same requests; leave the flag off if it causes errors or does not improve latency. Kernel performance depends on the device, shapes, and dtype, so results from other Radeon GPUs do not predict the 780M result ([PyTorch ROCm notes](https://github.com/pytorch/pytorch/blob/main/docs/source/notes/hip.rst)).
+
 ## Useful commands
 
 ```sh
