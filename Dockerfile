@@ -13,7 +13,12 @@ COPY . /app
 # would replace it with the default CPU PyTorch wheel.
 RUN python -m pip install --no-cache-dir --upgrade pip && \
     python -m pip install --no-cache-dir -e '.[serve]' \
-      'transformers>=5.3,<6' 'peft>=0.15' 'safetensors>=0.5' 'accelerate>=1.0'
+      'transformers>=5.3,<6' 'peft>=0.15' 'safetensors>=0.5' 'accelerate>=1.0' && \
+    python -m pip install --no-cache-dir 'einops' && \
+    python -m pip install --no-cache-dir --no-deps 'flash-linear-attention==0.5.2' && \
+    HIP_ARCHITECTURES=gfx1103 python -m pip install --no-cache-dir --no-build-isolation \
+      'causal-conv1d==1.7.0' && \
+    python -c "import torch, fla, causal_conv1d; assert torch.version.hip, 'Expected AMD ROCm PyTorch'; print('ROCm kernels imported with', torch.__version__, torch.version.hip)"
 
 EXPOSE 8765
 CMD ["python", "/app/docker/entrypoint.py"]

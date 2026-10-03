@@ -117,6 +117,8 @@ The Radeon 780M is an integrated GPU and uses system memory. On ROCm the server 
 
 The Compose service sets `HSA_TOOLS_DISABLE_REGISTER=1` to prevent an idle CPU spin in ROCr's `AsyncEventsLoop` observed with this PyTorch/ROCm setup. Imajev serving does not use ROCm profiling tools. This disables HSA tool registration, so unset it (`HSA_TOOLS_DISABLE_REGISTER=0`) only when you need ROCprofiler/ROCTracer profiling. Apply the setting with `docker compose up -d`; no image rebuild is needed.
 
+The image also installs the Qwen3.5 DeltaNet acceleration packages `flash-linear-attention` and `causal-conv1d`. FLA is installed without dependency resolution to preserve the ROCm PyTorch/Triton supplied by AMD; `causal-conv1d` is built for the documented Radeon 780M target (`gfx1103`). Rebuild with `docker compose up -d --build` after changing these dependencies. The Docker build checks that both packages import and that PyTorch still has ROCm enabled.
+
 The service defaults to one option-order pass (`IMAJEV_ROTATIONS=1`) to keep latency and memory use down. The public 4-rotation configuration uses `calibration-rot4.json`; to enable it, set both `IMAJEV_ROTATIONS=4` and `IMAJEV_CALIBRATION=calibration-rot4.json` in `.env`, then recreate the service with `docker compose up -d`. Calibration changes probabilities, not the selected answer. These H100 benchmark timings do not predict 780M performance.
 
 ## Useful commands
