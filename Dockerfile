@@ -16,6 +16,9 @@ RUN python -m pip install --no-cache-dir --upgrade pip && \
       'transformers>=5.3,<6' 'peft>=0.15' 'safetensors>=0.5' 'accelerate>=1.0' && \
     python -m pip install --no-cache-dir 'einops' && \
     python -m pip install --no-cache-dir --no-deps 'flash-linear-attention==0.5.2' && \
+    python -m pip install --no-cache-dir --no-deps \
+      --index-url https://stable.repo.amd.com/rocm/whl-next/ 'rocm-sdk-devel==10.0.0' && \
+    rocm-sdk init && \
     HIP_ARCHITECTURES=gfx1103 python -m pip install --no-cache-dir --no-build-isolation \
       'causal-conv1d==1.7.0' && \
     python -c "import torch, fla, causal_conv1d; assert torch.version.hip, 'Expected AMD ROCm PyTorch'; print('ROCm kernels imported with', torch.__version__, torch.version.hip)"
