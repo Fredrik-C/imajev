@@ -21,7 +21,13 @@ RUN python -m pip install --no-cache-dir --upgrade pip && \
     rocm-sdk init && \
     ROCM_DEVEL_ROOT="$(rocm-sdk path --root)" && \
     test -f "$ROCM_DEVEL_ROOT/include/hip/hip_runtime_api.h" && \
-    CPATH="$ROCM_DEVEL_ROOT/include${CPATH:+:$CPATH}" HIP_ARCHITECTURES=gfx1103 \
+    ROCM_SITE_PACKAGES="$(python -c 'import sysconfig; print(sysconfig.get_paths()["purelib"])')" && \
+    ROCM_CORE_LIB="$ROCM_SITE_PACKAGES/_rocm_sdk_core/lib" && \
+    ROCM_HIP_RUNTIME="$(find "$ROCM_CORE_LIB" -maxdepth 1 -name 'libamdhip64.so.*' -print -quit)" && \
+    test -n "$ROCM_HIP_RUNTIME" && \
+    ln -sfn "$(basename "$ROCM_HIP_RUNTIME")" "$ROCM_CORE_LIB/libamdhip64.so" && \
+    CPATH="$ROCM_DEVEL_ROOT/include${CPATH:+:$CPATH}" \
+    LIBRARY_PATH="$ROCM_CORE_LIB${LIBRARY_PATH:+:$LIBRARY_PATH}" HIP_ARCHITECTURES=gfx1103 \
       python -m pip install --no-cache-dir --no-build-isolation \
       'causal-conv1d==1.7.0' && \
     python -c "import torch, fla, causal_conv1d; assert torch.version.hip, 'Expected AMD ROCm PyTorch'; print('ROCm kernels imported with', torch.__version__, torch.version.hip)"
