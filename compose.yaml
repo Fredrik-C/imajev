@@ -1,0 +1,34 @@
+services:
+  imajev-api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: imajev-api:local
+    container_name: imajev-api
+    restart: unless-stopped
+    devices:
+      - /dev/kfd:/dev/kfd
+      - /dev/dri:/dev/dri
+    group_add:
+      - "${VIDEO_GID:-44}"
+      - "${RENDER_GID:-109}"
+    security_opt:
+      - seccomp=unconfined
+    shm_size: 8gb
+    ports:
+      - "${IMAJEV_PORT:-8765}:8765"
+    environment:
+      IMAJEV_API_KEY: "${IMAJEV_API_KEY:?Set IMAJEV_API_KEY in .env}"
+      IMAJEV_MODEL_REPO: "${IMAJEV_MODEL_REPO:-mohit67890/imajev-4b}"
+      IMAJEV_MODEL_REVISION: "${IMAJEV_MODEL_REVISION:-c9e5f132465da85d31735ec502d5557982671a7d}"
+      IMAJEV_BASE_REPO: "${IMAJEV_BASE_REPO:-Qwen/Qwen3.5-4B}"
+      IMAJEV_BASE_REVISION: "${IMAJEV_BASE_REVISION:-851bf6e806efd8d0a36b00ddf55e13ccb7b8cd0a}"
+      IMAJEV_ROTATIONS: "${IMAJEV_ROTATIONS:-1}"
+      IMAJEV_CALIBRATION: "${IMAJEV_CALIBRATION:-calibration.json}"
+      IMAJEV_MAX_INPUT_TOKENS: "${IMAJEV_MAX_INPUT_TOKENS:-4096}"
+      IMAJEV_PORT: "8765"
+    volumes:
+      - imajev-models:/models
+
+volumes:
+  imajev-models:

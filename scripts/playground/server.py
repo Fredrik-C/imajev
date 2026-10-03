@@ -13,9 +13,11 @@ import binascii
 import json
 import logging
 import mimetypes
+import os
 import re
 import sys
 import threading
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from time import perf_counter
@@ -121,7 +123,15 @@ class TorchBackend:
         if not Path(self.bundle["path"]).is_dir():
             raise ValueError("Local model snapshot is missing; run scripts/download_model.py")
         start = perf_counter()
-        dtype = torch.bfloat16 if device == "cuda" and not float32 else torch.float32
+        # AMD's Ryzen ROCm support matrix validates FP16 on APUs; CUDA servers use the
+        # benchmarked bf16 path. Keep the ROCm choice explicit instead of assuming CUDA
+        # and ROCm expose the same validated dtypes.
+        if float32:
+            dtype = torch.float32
+        elif device == "cuda" and torch.version.hip is not None:
+            dtype = torch.float16
+        else:
+            dtype = torch.bfloat16 if device == "cuda" else torch.float32
         # --merge-lora loads in float32 so the merge is formed at full precision, then rounds once to the serving dtype.
         # In bf16 that rounding still moves near-tie decisions (and calibration), so it is opt-in; --fast alone keeps
         # the LoRA unmerged and computes exactly the benchmarked function.
@@ -455,6 +465,26 @@ def create_app(backend, examples=None, static=STATIC, calibration=None, thinking
         log.info("%s  images=%d questions=%d total_ms=%.1f abstained=%d",
                  datetime.now(timezone.utc).isoformat(timespec="milliseconds"),
                  len(images), len(request.fields), total_ms, abstained)
+        return body
+
+    @app.post("/api/alpha/decisions")
+    async def openrouter_decisions(http_request: HttpRequest):
+        """OpenRouter Jev endpoint shape, served locally with a bearer key from the environment."""
+        configured_key = os.environ.get("IMAJEV_API_KEY")
+        if not configured_key:
+            raise PlaygroundError(503, "server_misconfigured", "IMAJEV_API_KEY is required for /api/alpha/decisions")
+        supplied = http_request.headers.get("authorization", "")
+        scheme, _, token = supplied.partition(" ")
+        if scheme.lower() != "bearer" or token != configured_key:
+            raise PlaygroundError(401, "unauthorized", "A valid Bearer token is required")
+
+        # The OpenRouter Jev tutorial sends {model, state, questions}; read_payload already
+        # removes the routing-only model field and supports the optional image extension.
+        body = await systemone(http_request)
+        body["id"] = "gen-dec-" + uuid.uuid4().hex
+        body["provider"] = "Imajev"
+        body["model"] = backend.model
+        body["usage"].setdefault("output_tokens", 0)  # this model scores labels; it does not generate answer text
         return body
 
     static = Path(static)
