@@ -28,6 +28,7 @@ services:
       IMAJEV_ROTATIONS: "${IMAJEV_ROTATIONS:-1}"
       IMAJEV_CALIBRATION: "${IMAJEV_CALIBRATION:-calibration.json}"
       IMAJEV_MAX_INPUT_TOKENS: "${IMAJEV_MAX_INPUT_TOKENS:-4096}"
+      IMAJEV_FAST: "${IMAJEV_FAST:-0}"
       IMAJEV_PORT: "8765"
     volumes:
       - imajev-models:/models

@@ -49,4 +49,6 @@ command = [
     "--host", "0.0.0.0",
     "--port", "8765",
 ]
+if os.environ.get("IMAJEV_FAST", "0").strip().lower() in {"1", "true", "yes", "on"}:
+    command.append("--fast")
 os.execvpe(command[0], command, os.environ)

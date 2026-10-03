@@ -121,6 +121,8 @@ The image also installs `fla-core` with `flash-linear-attention` for Qwen3.5's D
 
 The service defaults to one option-order pass (`IMAJEV_ROTATIONS=1`) to keep latency and memory use down. The public 4-rotation configuration uses `calibration-rot4.json`; to enable it, set both `IMAJEV_ROTATIONS=4` and `IMAJEV_CALIBRATION=calibration-rot4.json` in `.env`, then recreate the service with `docker compose up -d`. Calibration changes probabilities, not the selected answer. These H100 benchmark timings do not predict 780M performance.
 
+For lower PyTorch latency, set `IMAJEV_FAST=1` in `.env` and recreate the service. This enables cached tokenization and attempts CUDA/HIP graph capture at startup; graph capture adds startup time and the speedup has not been measured on the Radeon 780M. If capture fails, the server logs the failure and serves with the eager fast path. Compare `total_ms` and answers on representative requests; set `IMAJEV_FAST=0` to return to the current path.
+
 ## Useful commands
 
 ```sh
