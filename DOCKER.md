@@ -1,10 +1,46 @@
-# Docker API server (AMD ROCm)
+# Imajev deployment: CUDA, ROCm, and Apple MLX
 
-This runs the pinned `imajev-4b` adapter and its Qwen3.5-4B base model in a ROCm PyTorch container. It exposes the typed-decision route used by the OpenRouter Jev tutorial at `POST /api/alpha/decisions`, as well as the repository's `POST /v1/systemone` route.
+This guide covers one API and three local GPU runtimes. NVIDIA CUDA and AMD ROCm run in Docker; Apple MLX runs natively on macOS so it can use Metal. The container builds are separate because their PyTorch, GPU libraries, and device access are platform-specific.
+
+| Platform | Runtime | Files / launch command |
+| --- | --- | --- |
+| NVIDIA GPU on Linux | CUDA | `Dockerfile.cuda`, `compose.cuda.yaml` |
+| AMD Radeon 780M on supported Ubuntu | ROCm | `Dockerfile.rocm`, `compose.yaml` |
+| Apple silicon Mac | MLX / Metal | Native Python commands in [Apple MLX](#apple-mlx-on-macos) |
+
+Both container variants serve the pinned `imajev-4b` adapter and Qwen3.5-4B base model. The API exposes the typed-decision route used by the OpenRouter Jev tutorial at `POST /api/alpha/decisions`, as well as the repository's `POST /v1/systemone` route.
 
 The OpenRouter tutorial calls a Jev-specific API, not `/v1/chat/completions`. This server implements that same request format: `model`, `state`, and `questions`, with `noul`, `choice`, and `score` types. It returns `id`, `provider`, `model`, `answers`, and `usage`; answers also include Imajev's `unknown_probability` and `abstained` fields. Image data URLs in the state are accepted as an Imajev extension.
 
-## Host requirements
+## Shared container setup
+
+From the repository root, create `.env` with a private bearer key. `openssl` can generate one:
+
+```sh
+printf 'IMAJEV_API_KEY=%s\n' "$(openssl rand -hex 32)" > .env
+chmod 600 .env
+```
+
+The API listens on port `8765`; change the host port with `IMAJEV_PORT` in `.env`. The first start downloads the pinned base model and adapter into the persistent `imajev-models` Docker volume (several GB). Later starts reuse those files.
+
+The `/api/alpha/decisions` route requires `Authorization: Bearer <IMAJEV_API_KEY>`. `/v1/models` is a basic unauthenticated status endpoint. For a headless host on a LAN, keep the bearer key private and put a TLS reverse proxy in front of the service if clients connect over an untrusted network.
+
+## NVIDIA CUDA in Docker
+
+Use a Linux host with a supported NVIDIA driver and Docker Engine plus the NVIDIA Container Toolkit. Follow NVIDIA's [Container Toolkit install guide](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html), configure Docker with `sudo nvidia-ctk runtime configure --runtime=docker`, then restart Docker. Confirm `nvidia-smi` works on the host.
+
+Build and start the CUDA service:
+
+```sh
+docker compose -f compose.cuda.yaml up -d --build
+docker compose -f compose.cuda.yaml logs -f imajev-api
+```
+
+The CUDA image uses the CUDA-enabled PyTorch development image and builds the matching `causal-conv1d` extension into the image. CUDA graph capture is attempted when `IMAJEV_FAST=1`; this adds startup time while graphs are recorded. If a GPU architecture or graph-capture issue occurs, set `IMAJEV_FAST=0` in `.env` and recreate the container.
+
+## AMD ROCm in Docker
+
+### Host requirements
 
 For the Radeon 780M, use **Ubuntu 24.04.4 with the OEM 6.17 kernel** and the ROCm 10.0 generation runtime image selected below. AMD's current compatibility matrix lists Radeon 780M (`gfx1103`) and Ubuntu 24.04.4 / OEM 6.17 for Ryzen APUs. The `rocm/pytorch` container supplies ROCm user-space libraries and PyTorch. The host only needs the Linux `amdgpu` kernel driver and device nodes; do not install a second ROCm/PyTorch stack on the host.
 
@@ -27,14 +63,7 @@ Install Docker Engine and the Docker Compose plugin using Docker's Ubuntu instru
 
 If you are running a different Ubuntu/kernel combination, check AMD's [ROCm 10.0 compatibility matrix](https://rocm.docs.amd.com/en/latest/compatibility/compatibility-matrix.html) before installing; the kernel driver and ROCm user-space versions must be compatible. ROCm support for integrated graphics has changed between ROCm releases.
 
-## Start
-
-From the repository root, create `.env` with a private bearer key. `openssl` can generate one:
-
-```sh
-printf 'IMAJEV_API_KEY=%s\n' "$(openssl rand -hex 32)" > .env
-chmod 600 .env
-```
+### Start the ROCm service
 
 If your host's `video` or `render` group IDs are not 44 and 109, put the actual numeric IDs in `.env` too:
 
@@ -50,7 +79,7 @@ docker compose up -d --build
 docker compose logs -f imajev-api
 ```
 
-The first start downloads the pinned base model and adapter into the persistent `imajev-models` Docker volume (several GB). Later starts reuse those files. The API listens on port `8765`; change the host port with `IMAJEV_PORT` in `.env`. The Compose file passes `/dev/kfd` and `/dev/dri` to the container.
+The Compose file passes `/dev/kfd` and `/dev/dri` to the container.
 
 Verify the loaded backend and model:
 
@@ -58,7 +87,28 @@ Verify the loaded backend and model:
 curl http://127.0.0.1:8765/v1/models
 ```
 
-For a headless host on a LAN, the service port is published on the host interfaces. Keep the bearer key private and put a TLS reverse proxy in front of it if clients connect over an untrusted network. The OpenRouter-compatible route requires `Authorization: Bearer <IMAJEV_API_KEY>`; `/v1/models` is a basic unauthenticated status endpoint.
+## Apple MLX on macOS
+
+On Apple silicon, run the server natively to use MLX and Metal. The Linux Docker images above cannot use the macOS Metal runtime. From the repository root on the Mac:
+
+```sh
+python3.11 -m venv .venv
+source .venv/bin/activate
+python -m pip install -e '.[serve,mlx]'
+python scripts/download_model.py --model 4b
+hf download mohit67890/imajev-4b --local-dir adapters/imajev-4b
+printf 'IMAJEV_API_KEY=%s\n' "$(openssl rand -hex 32)" > .env
+chmod 600 .env
+set -a; . ./.env; set +a
+PYTHONPATH=src:scripts python scripts/playground/server.py \
+  --backend mlx \
+  --model-bundle artifacts/model-qwen4b.json \
+  --adapter adapters/imajev-4b/mlx \
+  --calibration adapters/imajev-4b/calibration.json \
+  --model-name imajev-4b --host 127.0.0.1 --port 8765
+```
+
+The server is then available at `http://127.0.0.1:8765`. The first model download is several GB. To use the playground UI, open the root URL; API routes and request formats match the container deployment.
 
 ## Make a decision call
 
@@ -113,7 +163,7 @@ You can point a client that supports a configurable Jev decisions URL at `http:/
 
 ## GPU memory and speed
 
-The Radeon 780M is an integrated GPU and uses system memory. On ROCm the server selects FP16 (AMD's documented validated type for Ryzen APUs); CUDA servers retain their bf16 path. 96 GB system RAM is ample for the model, but actual throughput depends on the iGPU memory bandwidth and the UMA allocation set by firmware. If GPU memory allocation fails or is unusually constrained, check BIOS/UEFI UMA frame-buffer settings and leave enough memory for Ubuntu and Docker.
+The Radeon 780M is an integrated GPU and uses system memory. On ROCm the server selects FP16 (AMD's documented validated type for Ryzen APUs); CUDA servers use their bf16 path. Actual throughput depends on GPU memory bandwidth and, for an iGPU, the UMA allocation set by firmware. If GPU memory allocation fails or is unusually constrained, check BIOS/UEFI UMA frame-buffer settings and leave enough memory for Ubuntu and Docker. Apple MLX uses Apple silicon's unified memory.
 
 The Compose service sets `HSA_TOOLS_DISABLE_REGISTER=1` to prevent an idle CPU spin in ROCr's `AsyncEventsLoop` observed with this PyTorch/ROCm setup. Imajev serving does not use ROCm profiling tools. This disables HSA tool registration, so unset it (`HSA_TOOLS_DISABLE_REGISTER=0`) only when you need ROCprofiler/ROCTracer profiling. Apply the setting with `docker compose up -d`; no image rebuild is needed.
 
@@ -128,16 +178,25 @@ PyTorch reports its ROCm AOTriton attention kernels as experimental on this GPU.
 ## Useful commands
 
 ```sh
+# ROCm
 docker compose logs -f imajev-api
 docker compose restart imajev-api
 docker compose down
+
+# CUDA
+docker compose -f compose.cuda.yaml logs -f imajev-api
+docker compose -f compose.cuda.yaml restart imajev-api
+docker compose -f compose.cuda.yaml down
 ```
 
-`docker compose down -v` also deletes the downloaded model volume. The model files will be downloaded again on the next start.
+For either container deployment, `down -v` also deletes the downloaded model volume. The model files will be downloaded again on the next start.
 
 ## References
 
 - [OpenRouter Jev tutorial](https://openrouter.ai/docs/guides/community/jev-tutorial)
+- [NVIDIA Container Toolkit install guide](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html)
+- [Docker Compose GPU support](https://docs.docker.com/compose/how-tos/gpu-support/)
+- [MLX install guide](https://ml-explore.github.io/mlx/build/html/install.html)
 - [AMD ROCm compatibility matrix](https://rocm.docs.amd.com/en/latest/compatibility/compatibility-matrix.html)
 - [Run ROCm Docker containers](https://rocm.docs.amd.com/en/develop/install/docker-containers.html)
 - [AMD PyTorch container instructions](https://rocm.docs.amd.com/projects/radeon-ryzen/en/latest/docs/install/installrad/native_linux/install-pytorch.html)
